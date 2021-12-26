@@ -1,18 +1,22 @@
 package com.lin;
 
+import com.sun.deploy.util.StringUtils;
+
 import java.io.*;
 import java.net.HttpURLConnection;
-import java.net.MalformedURLException;
 import java.net.URL;
-import java.nio.channels.Channel;
-import java.nio.channels.FileChannel;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class HttpClient {
-    public void downloadFile(String url, String uuid, String DirectoryPath){
+    public static void downloadFile(String url, String uuid, String DirectoryPath) throws Exception {
         File dir = new File(DirectoryPath);
         dir.mkdirs();
         HttpURLConnection connection = (HttpURLConnection) new URL(url + "?" + "uuid=" + uuid).openConnection();
@@ -21,20 +25,26 @@ public class HttpClient {
         connection.setReadTimeout(60000);
         connection.connect();
         System.out.println("code: " + connection.getResponseCode());
-        if(connection.getResponseCode() == 200) {
-            Files.copy(connection.getInputStream(), Paths.get(DirectoryPath + File.separator + connection.getHeaderField("fileName")));
+        if (connection.getResponseCode() == 200) {
+            Pattern compile = Pattern.compile(".*filename=\"(.*)\"");
+            Matcher matcher = compile.matcher(connection.getHeaderField("Content-Disposition"));
+            if (matcher.find()) {
+                String fileFullName = URLDecoder.decode(matcher.group(1), "utf-8");
+                Files.copy(connection.getInputStream(), Paths.get(DirectoryPath + File.separator + fileFullName));
+            }
         }
         System.out.println("文件已完成下载");
+        connection.disconnect();
     }
 
-    public void getFileInfo(String url, String uuid){
+    public static void getFileInfo(String url, String uuid) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(url + "?" + "uuid=" + uuid).openConnection();
         connection.setRequestMethod("GET");
         connection.setConnectTimeout(15000);
         connection.setReadTimeout(60000);
         connection.connect();
         System.out.println("code: " + connection.getResponseCode());
-        if(connection.getResponseCode() == 200) {
+        if (connection.getResponseCode() == 200) {
             System.out.println("文件信息如下");
             BufferedReader br = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8));
             String temp = null;
@@ -43,74 +53,46 @@ public class HttpClient {
             }
             System.out.println("=============");
         }
+        connection.disconnect();
     }
 
+    public static String upload(String httpUrl, String filePath) throws Exception {
+        String Boundary = UUID.randomUUID().toString(); // 文件边界
 
-    public static String doPost(String httpUrl, String param) {
-        HttpURLConnection connection = null;
-        InputStream is = null;
-        OutputStream os = null;
-        BufferedReader br = null;
-        String result = null;
-        try {
-            URL url = new URL(httpUrl);
-            connection = (HttpURLConnection) url.openConnection();
-            connection.setRequestMethod("POST");
-            connection.setConnectTimeout(5000);
-            connection.setReadTimeout(5000);
-            connection.setDoOutput(true);
-            connection.setDoInput(true);
-            connection.setRequestProperty("Content-Type", "multipart/form-data");
-            // 通过连接对象获取一个输出流
-            os = connection.getOutputStream();
-            // 通过输出流对象将参数写出去/传输出去,它是通过字节数组写出的
-            os.write(param.getBytes());
-            // 通过连接对象获取一个输入流，向远程读取
-            if (connection.getResponseCode() == 200) {
+        HttpURLConnection connection = (HttpURLConnection) new URL(httpUrl).openConnection();
+        connection.setConnectTimeout(5000);
+        connection.setReadTimeout(5000);
+        connection.setDoOutput(true);
+        connection.setRequestMethod("POST");
+        connection.setRequestProperty("Charset", "utf-8");
+        connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + Boundary);
 
-                is = connection.getInputStream();
-                // 对输入流对象进行包装:charset根据工作项目组的要求来设置
-                br = new BufferedReader(new InputStreamReader(is, "UTF-8"));
-
-                StringBuffer sbf = new StringBuffer();
-                String temp = null;
-                // 循环遍历一行一行读取数据
-                while ((temp = br.readLine()) != null) {
-                    sbf.append(temp);
-                    sbf.append("\r\n");
-                }
-                result = sbf.toString();
+        File file = new File(filePath);
+        DataOutputStream out = new DataOutputStream(connection.getOutputStream());
+        out.writeUTF("--" + Boundary + "\r\n" +
+                "Content-Disposition: form-data; name=\"file\"; filename=\"" +
+                file.getName() + "\"\r\n" +
+                "Content-Type: application/octet-stream; charset=utf-8" + "\r\n\r\n");
+        if (file.isFile()) {
+            FileInputStream fileInputStream = new FileInputStream(file);
+            int read;
+            byte[] bytes = new byte[1024 * 8];
+            while ((read = fileInputStream.read(bytes)) != -1) {
+                out.write(bytes, 0, read);
             }
-        } catch (MalformedURLException e) {
-            e.printStackTrace();
-        } catch (IOException e) {
-            e.printStackTrace();
-        } finally {
-            // 关闭资源
-            if (null != br) {
-                try {
-                    br.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
-            if (null != os) {
-                try {
-                    os.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
-            if (null != is) {
-                try {
-                    is.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
-            // 断开与远程地址url的连接
-            connection.disconnect();
+            out.writeUTF("\r\n--" + Boundary + "--\r\n");
+            out.flush();
+            fileInputStream.close();
         }
-        return result;
+        System.out.println("code: " + connection.getResponseCode());
+        String uuid = null;
+        if (connection.getResponseCode() == 200) {
+            BufferedReader br = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8));
+            uuid = br.readLine();
+            System.out.println("uuid:" + uuid);
+            System.out.println("=============");
+        }
+        connection.disconnect();
+        return uuid;
     }
 }
